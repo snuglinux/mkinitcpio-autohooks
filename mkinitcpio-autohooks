@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# mkinitcpio-autohooks
+# - Adds mdadm_udev ONLY when mdraid is actually present on the system
+# - Adds encrypt (or sd-encrypt if HOOKS contains systemd) ONLY when LUKS is present
+# - Removes these hooks when the corresponding conditions are no longer met
+# - Rebuilds initramfs via mkinitcpio -P only when HOOKS changed
+
+CFG="${1:-/etc/mkinitcpio.d/hooks-udev.conf}"
+
+# Do not break pacman transactions if config file is missing.
+if [[ ! -f "$CFG" ]]; then
+  echo "mkinitcpio-autohooks: config not found: $CFG (skipping)"
+  exit 0
+fi
+
+have_cmd() { command -v "$1" >/dev/null 2>&1; }
+
+array_contains() {
+  local needle="$1"; shift
+  local x
+  for x in "$@"; do [[ "$x" == "$needle" ]] && return 0; done
+  return 1
+}
+
+dedup_array() {
+  # Preserve order, remove duplicates
+  local -a in=("$@") out=()
+  local x
+  for x in "${in[@]}"; do
+    array_contains "$x" "${out[@]}" || out+=("$x")
+  done
+  printf '%s\n' "${out[@]}"
+}
+
+read_hooks_from_cfg() {
+  # Read the first HOOKS=(...) line and output hooks one per line.
+  # Returns non-zero if HOOKS line is not found.
+  local line
+  line="$(grep -E '^[[:space:]]*HOOKS=\(' "$CFG" | head -n1 || true)"
+  [[ -n "$line" ]] || return 1
+
+  # Extract content between '(' and first ')'
+  line="${line#*HOOKS=(}"
+  line="${line%%)*}"
+
+  # Split by spaces (typical mkinitcpio format)
+  local -a hooks=()
+  read -r -a hooks <<< "$line"
+  printf '%s\n' "${hooks[@]}"
+}
+
+write_hooks_to_cfg() {
+  # Replace (or append) HOOKS=(...) line; create a timestamped backup first.
+  local hooks_str="$1"
+  local tmp newline
+  tmp="$(mktemp)"
+  newline="HOOKS=(${hooks_str})"
+
+  if grep -qE '^[[:space:]]*HOOKS=\(' "$CFG"; then
+    awk -v nl="$newline" '
+      BEGIN{done=0}
+      /^[[:space:]]*HOOKS=\(/ { print nl; done=1; next }
+      { print }
+      END{ if(!done) print nl }
+    ' "$CFG" >"$tmp"
+  else
+    {
+      cat "$CFG"
+      echo "$newline"
+    } >"$tmp"
+  fi
+
+  cp -a "$CFG" "$CFG.bak.$(date +%Y%m%d-%H%M%S)"
+  install -m 0644 "$tmp" "$CFG"
+  rm -f "$tmp"
+}
+
+insert_after() {
+  # insert_after "block" <list...> -- <items_to_insert...>
+  # If "block" is not found, insert before "filesystems" if present, otherwise append.
+  local after="$1"; shift
+  local -a list=()
+  local -a ins=()
+  local found=0
+  local x
+
+  while (($#)); do
+    if [[ "$1" == "--" ]]; then shift; break; fi
+    list+=("$1"); shift
+  done
+  ins=("$@")
+
+  local -a out=()
+  for x in "${list[@]}"; do
+    out+=("$x")
+    if [[ "$x" == "$after" ]]; then
+      out+=("${ins[@]}")
+      found=1
+    fi
+  done
+
+  if (( ! found )); then
+    out=()
+    local inserted=0
+    for x in "${list[@]}"; do
+      if [[ "$x" == "filesystems" && $inserted -eq 0 ]]; then
+        out+=("${ins[@]}")
+        inserted=1
+      fi
+      out+=("$x")
+    done
+    (( inserted )) || out+=("${ins[@]}")
+  fi
+
+  printf '%s\n' "${out[@]}"
+}
+
+have_mdraid() {
+  # Detect mdraid presence by:
+  # 1) blkid TYPE=linux_raid_member (metadata on disk/partition)
+  # 2) /sys/block/md* (existing md block devices)
+  # 3) lsblk fallback (md devices or raid types)
+
+  if have_cmd blkid; then
+    blkid -t TYPE=linux_raid_member -o device >/dev/null 2>&1 && return 0
+  fi
+
+  compgen -G "/sys/block/md*" >/dev/null 2>&1 && return 0
+
+  if have_cmd lsblk; then
+    lsblk -nrpo NAME,TYPE 2>/dev/null | grep -qE '^/dev/md[0-9]+' && return 0
+    lsblk -nrpo TYPE 2>/dev/null | grep -qE '^raid(0|1|4|5|6|10)$' && return 0
+  fi
+
+  return 1
+}
+
+have_luks() {
+  # Detect LUKS presence by:
+  # 1) blkid TYPE=crypto_LUKS
+  # 2) lsblk fallback
+
+  if have_cmd blkid; then
+    blkid -t TYPE=crypto_LUKS -o device >/dev/null 2>&1 && return 0
+  fi
+
+  if have_cmd lsblk; then
+    lsblk -nrpo FSTYPE 2>/dev/null | grep -q '^crypto_LUKS$' && return 0
+  fi
+
+  return 1
+}
+
+# ---- main ----
+
+if [[ $EUID -ne 0 ]]; then
+  echo "mkinitcpio-autohooks: must be run as root" >&2
+  exit 1
+fi
+
+existing_hooks=()
+if ! mapfile -t existing_hooks < <(read_hooks_from_cfg); then
+  echo "mkinitcpio-autohooks: HOOKS=(...) not found in $CFG (skipping)" >&2
+  exit 0
+fi
+
+# If systemd hook is present, prefer sd-encrypt instead of encrypt
+encrypt_hook="encrypt"
+if array_contains "systemd" "${existing_hooks[@]}"; then
+  encrypt_hook="sd-encrypt"
+fi
+
+need_mdadm=0
+need_encrypt=0
+have_mdraid && need_mdadm=1
+have_luks && need_encrypt=1
+
+# Remove managed hooks first, then add them back based on detection
+managed=(mdadm_udev encrypt sd-encrypt)
+filtered=()
+for h in "${existing_hooks[@]}"; do
+  array_contains "$h" "${managed[@]}" && continue
+  filtered+=("$h")
+done
+
+to_insert=()
+(( need_mdadm ))   && to_insert+=(mdadm_udev)
+(( need_encrypt )) && to_insert+=("$encrypt_hook")
+
+if ((${#to_insert[@]})); then
+  mapfile -t updated < <(insert_after "block" "${filtered[@]}" -- "${to_insert[@]}")
+else
+  updated=("${filtered[@]}")
+fi
+
+mapfile -t final_hooks < <(dedup_array "${updated[@]}")
+
+old_str="${existing_hooks[*]}"
+new_str="${final_hooks[*]}"
+
+if [[ "$new_str" != "$old_str" ]]; then
+  echo "mkinitcpio-autohooks: updating $CFG"
+  echo "OLD: HOOKS=(${old_str})"
+  echo "NEW: HOOKS=(${new_str})"
+  write_hooks_to_cfg "$new_str"
+  echo "mkinitcpio-autohooks: running mkinitcpio -P"
+  mkinitcpio -P
+else
+  echo "mkinitcpio-autohooks: no changes needed"
+fi

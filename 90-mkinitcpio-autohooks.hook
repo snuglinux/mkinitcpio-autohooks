@@ -1,0 +1,15 @@
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Operation = Remove
+Type = Package
+Target = mdadm
+Target = cryptsetup
+Target = mkinitcpio
+Target = mkinitcpio-autohooks
+
+[Action]
+Description = Auto-update mkinitcpio HOOKS (mdraid/LUKS) and rebuild initramfs
+When = PostTransaction
+Exec = /usr/bin/mkinitcpio-autohooks /etc/mkinitcpio.d/hooks-udev.conf
+NeedsTargets
