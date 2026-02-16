@@ -14,6 +14,7 @@ package() {
   cd "$srcdir/${pkgname}-${pkgver}"
   install -Dm755 mkinitcpio-autohooks         "${pkgdir}/usr/bin/mkinitcpio-autohooks"
   install -Dm644 90-mkinitcpio-autohooks.hook "${pkgdir}/usr/share/libalpm/hooks/90-mkinitcpio-autohooks.hook"
-  install -Dm644 README.md                     "${pkgdir}/usr/share/doc/${pkgname}/README"
+  install -Dm644 hooks-udev.conf              "${pkgdir}/etc/mkinitcpio.conf.d/hooks-udev.conf"
+  install -Dm644 README.md                    "${pkgdir}/usr/share/doc/${pkgname}/README"
   install -Dm644 LICENSE                      "${pkgdir}/usr/share/licenses/$pkgname/LICENSE"
 }
