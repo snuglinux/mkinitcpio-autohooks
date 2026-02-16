@@ -1,14 +1,14 @@
 # Maintainer: snuglinux
 
 pkgname=mkinitcpio-autohooks
-pkgver=0.0.1
+pkgver=0.0.2
 pkgrel=1
 pkgdesc="Auto-manage mkinitcpio HOOKS based on mdraid/LUKS presence and rebuild initramfs"
 arch=('any')
 license=('GPL2')
 depends=('bash' 'coreutils' 'gawk' 'grep' 'mkinitcpio' 'util-linux')
 source=("https://github.com/snuglinux/$pkgname/archive/refs/tags/$pkgver.tar.gz")
-sha256sums=('f4e1304c08a202208a0a0911cd9a0f76f9b19e126861852ff9a4b0b1b741bc87')
+sha256sums=('7c82569b7895b886fd28b9f62f4a79539fb95828c9cfbab10d172b26ee25824f')
 
 package() {
   cd "$srcdir/${pkgname}-${pkgver}"
