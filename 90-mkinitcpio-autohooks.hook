@@ -11,5 +11,5 @@ Target = mkinitcpio-autohooks
 [Action]
 Description = Auto-update mkinitcpio HOOKS (mdraid/LUKS) and rebuild initramfs
 When = PostTransaction
-Exec = /usr/bin/mkinitcpio-autohooks /etc/mkinitcpio.d/hooks-udev.conf
+Exec = /usr/bin/mkinitcpio-autohooks /etc/mkinitcpio.conf.d/autohooks.conf
 NeedsTargets

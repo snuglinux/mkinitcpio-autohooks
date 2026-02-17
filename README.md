@@ -8,7 +8,7 @@ It is designed for setups where `mdadm` can be installed as a dependency, but yo
 
 On each run it:
 
-- Reads the first `HOOKS=(...)` line from the target config file (default: `/etc/mkinitcpio.d/hooks-udev.conf`)
+- Reads the first `HOOKS=(...)` line from the target config file (default: `/etc/mkinitcpio.conf.d/hooks-udev.conf`)
 - Detects:
   - **mdraid** presence
     - `blkid -t TYPE=linux_raid_member` (preferred)
@@ -24,7 +24,7 @@ On each run it:
   - If the existing HOOKS contain `systemd`, it uses `sd-encrypt` instead of `encrypt`
 - Inserts the managed hooks **after `block`** (or before `filesystems` if `block` is missing)
 - Writes a timestamped backup:
-  - `/etc/mkinitcpio.d/hooks-udev.conf.bak.YYYYMMDD-HHMMSS`
+  - `/etc/mkinitcpio.conf.d/hooks-udev.conf.bak.YYYYMMDD-HHMMSS`
 - Runs `mkinitcpio -P` **only if the HOOKS line changed**
 
 ## Files in this package
@@ -39,7 +39,7 @@ On each run it:
 By default the pacman hook calls:
 
 ```bash
-/usr/bin/mkinitcpio-autohooks /etc/mkinitcpio.d/hooks-udev.conf
+/usr/bin/mkinitcpio-autohooks /etc/mkinitcpio.conf.d/hooks-udev.conf
 ```
 
 If your system uses a different mkinitcpio config file, edit the hook and change the path.
@@ -49,7 +49,7 @@ If your system uses a different mkinitcpio config file, edit the hook and change
 Run (as root):
 
 ```bash
-sudo mkinitcpio-autohooks /etc/mkinitcpio.d/hooks-udev.conf
+sudo mkinitcpio-autohooks /etc/mkinitcpio.conf.d/hooks-udev.conf
 ```
 
 You should see output like:
@@ -71,7 +71,7 @@ ls -1 /sys/block | grep -E '^md[0-9]+' || echo "md devices: none"
 Check the final HOOKS line:
 
 ```bash
-grep -E '^[[:space:]]*HOOKS=\(' -n /etc/mkinitcpio.d/hooks-udev.conf
+grep -E '^[[:space:]]*HOOKS=\(' -n /etc/mkinitcpio.conf.d/hooks-udev.conf
 ```
 
 Rebuild with verbose output (optional):

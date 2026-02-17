@@ -7,7 +7,7 @@ set -euo pipefail
 # - Removes these hooks when the corresponding conditions are no longer met
 # - Rebuilds initramfs via mkinitcpio -P only when HOOKS changed
 
-CFG="${1:-/etc/mkinitcpio.d/hooks-udev.conf}"
+CFG="${1:-/etc/mkinitcpio.conf.d/autohooks.conf}"
 
 # Do not break pacman transactions if config file is missing.
 if [[ ! -f "$CFG" ]]; then
@@ -16,6 +16,50 @@ if [[ ! -f "$CFG" ]]; then
 fi
 
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
+
+disable_other_hooks_snippets() {
+  # Some systems load multiple mkinitcpio config snippets from /etc/mkinitcpio.conf.d.
+  # If more than one file defines HOOKS=(...), results can be ambiguous.
+  # We keep the active CFG and rename any other files in the same dir that contain
+  # a HOOKS=(...) line to "*._old".
+  local confdir keep_real
+  confdir="$(dirname -- "$CFG")"
+
+  [[ -d "$confdir" ]] || return 0
+
+  keep_real="$(readlink -f -- "$CFG" 2>/dev/null || echo "$CFG")"
+
+  local f f_real dst ts
+  shopt -s nullglob
+  for f in "$confdir"/*; do
+    [[ -f "$f" ]] || continue
+
+    # Skip the file we manage
+    f_real="$(readlink -f -- "$f" 2>/dev/null || echo "$f")"
+    [[ "$f_real" == "$keep_real" ]] && continue
+
+    # Skip already-disabled/backup/new files
+    case "$f" in
+      *._old|*._old.*|*.bak.*|*.pacnew|*.pacsave) continue ;;
+    esac
+
+    # Disable only snippets that define HOOKS
+    if grep -qE '^[[:space:]]*HOOKS=\(' "$f"; then
+      dst="${f}._old"
+      if [[ -e "$dst" ]]; then
+        ts="$(date +%Y%m%d-%H%M%S)"
+        dst="${f}._old.${ts}"
+      fi
+
+      if mv -f -- "$f" "$dst"; then
+        echo "mkinitcpio-autohooks: disabled conflicting HOOKS snippet: ${f} -> ${dst}"
+      else
+        echo "mkinitcpio-autohooks: WARNING: failed to rename ${f} (leaving as-is)" >&2
+      fi
+    fi
+  done
+  shopt -u nullglob
+}
 
 array_contains() {
   local needle="$1"; shift
@@ -118,11 +162,6 @@ insert_after() {
 }
 
 have_mdraid() {
-  # Detect mdraid presence by:
-  # 1) blkid TYPE=linux_raid_member (metadata on disk/partition)
-  # 2) /sys/block/md* (existing md block devices)
-  # 3) lsblk fallback (md devices or raid types)
-
   if have_cmd blkid; then
     blkid -t TYPE=linux_raid_member -o device >/dev/null 2>&1 && return 0
   fi
@@ -138,10 +177,6 @@ have_mdraid() {
 }
 
 have_luks() {
-  # Detect LUKS presence by:
-  # 1) blkid TYPE=crypto_LUKS
-  # 2) lsblk fallback
-
   if have_cmd blkid; then
     blkid -t TYPE=crypto_LUKS -o device >/dev/null 2>&1 && return 0
   fi
@@ -160,13 +195,15 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
+# Ensure only one active HOOKS=(...) definition exists in the snippet directory.
+disable_other_hooks_snippets
+
 existing_hooks=()
 if ! mapfile -t existing_hooks < <(read_hooks_from_cfg); then
   echo "mkinitcpio-autohooks: HOOKS=(...) not found in $CFG (skipping)" >&2
   exit 0
 fi
 
-# If systemd hook is present, prefer sd-encrypt instead of encrypt
 encrypt_hook="encrypt"
 if array_contains "systemd" "${existing_hooks[@]}"; then
   encrypt_hook="sd-encrypt"
@@ -177,7 +214,6 @@ need_encrypt=0
 have_mdraid && need_mdadm=1
 have_luks && need_encrypt=1
 
-# Remove managed hooks first, then add them back based on detection
 managed=(mdadm_udev encrypt sd-encrypt)
 filtered=()
 for h in "${existing_hooks[@]}"; do
