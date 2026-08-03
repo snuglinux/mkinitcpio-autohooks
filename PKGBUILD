@@ -8,7 +8,7 @@ arch=('any')
 license=('GPL2')
 depends=('bash' 'coreutils' 'gawk' 'grep' 'mkinitcpio' 'util-linux')
 source=("https://github.com/snuglinux/$pkgname/archive/refs/tags/$pkgver.tar.gz")
-sha256sums=('af65ba4c00d59adac0d833b7902086e8decd614762f380dbf06b13de0662d04b')
+sha256sums=('051aad76568aedce67b827f26c2d01d58ae78ff3302085bd3a1e492794523219')
 
 package() {
   cd "$srcdir/${pkgname}-${pkgver}"

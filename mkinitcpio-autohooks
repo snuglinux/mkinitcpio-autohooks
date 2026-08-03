@@ -17,6 +17,24 @@ fi
 
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
 
+is_archiso_preset() {
+  # ArchISO explicitly selects archiso.conf from its mkinitcpio preset.
+  # In that environment archiso.conf must remain active and ArchISO's own
+  # post-transaction hook is responsible for building the live initramfs.
+  local preset
+
+  shopt -s nullglob
+  for preset in /etc/mkinitcpio.d/*.preset; do
+    if grep -qF -- '/etc/mkinitcpio.conf.d/archiso.conf' "$preset"; then
+      shopt -u nullglob
+      return 0
+    fi
+  done
+  shopt -u nullglob
+
+  return 1
+}
+
 disable_other_hooks_snippets() {
   # Some systems load multiple mkinitcpio config snippets from /etc/mkinitcpio.conf.d.
   # If more than one file defines HOOKS=(...), results can be ambiguous.
@@ -193,6 +211,13 @@ have_luks() {
 if [[ $EUID -ne 0 ]]; then
   echo "mkinitcpio-autohooks: must be run as root" >&2
   exit 1
+fi
+
+# Do not modify ArchISO's dedicated HOOKS snippet or start a competing
+# mkinitcpio rebuild while the live image is being assembled.
+if is_archiso_preset; then
+  echo "mkinitcpio-autohooks: ArchISO preset detected (skipping)"
+  exit 0
 fi
 
 # Ensure only one active HOOKS=(...) definition exists in the snippet directory.
